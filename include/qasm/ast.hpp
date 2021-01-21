@@ -98,7 +98,13 @@ static std::unordered_map<ident,
         {"crz", [](const std::vector<double>& args) {
              assert(!args.empty());
              cmat mat{cmat::Identity(4, 4)};
-             mat.block(2, 2, 2, 2) = gt.RZ(args[0]);
+             // note the discrepancy; QISKIT defines it as
+             // CTRL-diag(1, e^{i\phi}) we comply to the QISKIT definition (and
+             // not the OPENQASM specs); see
+             // https://github.com/softwareQinc/qpp/issues/99 and
+             // https://github.com/softwareQinc/qpp/issues/70
+             mat.block(2, 2, 2, 2) =
+                 std::exp(1_i * args[0] / 2.0) * gt.RZ(args[0]);
              return mat;
          }}};
 
@@ -230,8 +236,10 @@ class Context {
                 return it->second.get();
         }
 
-        std::cerr << loc << ": Undeclared identifier " << id << "\n";
-        throw exception::Undeclared("qpp::qasm::Context::lookup()");
+        std::stringstream context;
+        context << loc << ": Undeclared identifier " << id;
+        throw exception::Undeclared("qpp::qasm::Context::lookup()",
+                                    context.str());
     }
 
     /**
@@ -586,9 +594,11 @@ class Varinfo : public IDisplay {
         auto reg = dynamic_cast<const Register*>(ctx.lookup(id_, loc_));
 
         if (reg == nullptr || reg->quantum_) {
-            std::cerr << loc_ << ": Identifier " << id_
-                      << " does not refer to a bit register\n";
-            throw exception::SemanticError("qpp::qasm::Varinfo::as_creg()");
+            std::stringstream context;
+            context << loc_ << ": Identifier " << id_
+                    << " does not refer to a bit register";
+            throw exception::SemanticError("qpp::qasm::Varinfo::as_creg()",
+                                           context.str());
         }
 
         if (offset_ == -1) {
@@ -599,8 +609,10 @@ class Varinfo : public IDisplay {
 
             // check register size
             if ((idx) offset_ >= reg->indices_.size()) {
-                std::cerr << loc_ << ": Index out of bounds\n";
-                throw exception::SemanticError("qpp::qasm::Varinfo::as_qreg()");
+                std::stringstream context;
+                context << loc_ << ": Index out of bounds";
+                throw exception::SemanticError("qpp::qasm::Varinfo::as_qreg()",
+                                               context.str());
             }
 
             return std::vector<idx>{reg->indices_[offset_]};
@@ -627,10 +639,11 @@ class Varinfo : public IDisplay {
                 auto reg = dynamic_cast<const Register*>(tmp);
                 // check register type
                 if (reg == nullptr || !reg->quantum_) {
-                    std::cerr << loc_ << ": Identifier " << id_
-                              << " does not refer to a qubit register\n";
+                    std::stringstream context;
+                    context << loc_ << ": Identifier " << id_
+                            << " does not refer to a qubit register";
                     throw exception::SemanticError(
-                        "qpp::qasm::Varinfo::as_qreg()");
+                        "qpp::qasm::Varinfo::as_qreg()", context.str());
                 }
 
                 return std::vector<idx>{reg->indices_};
@@ -641,15 +654,19 @@ class Varinfo : public IDisplay {
 
             // check register type
             if (reg == nullptr || !reg->quantum_) {
-                std::cerr << loc_ << ": Identifier " << id_
-                          << " does not refer to a qubit register\n";
-                throw exception::SemanticError("qpp::qasm::Varinfo::as_qreg()");
+                std::stringstream context;
+                context << loc_ << ": Identifier " << id_
+                        << " does not refer to a qubit register";
+                throw exception::SemanticError("qpp::qasm::Varinfo::as_qreg()",
+                                               context.str());
             }
 
             // check register size
             if ((idx) offset_ >= reg->indices_.size()) {
-                std::cerr << loc_ << ": Index out of bounds\n";
-                throw exception::SemanticError("qpp::qasm::Varinfo::as_qreg()");
+                std::stringstream context;
+                context << loc_ << ": Index out of bounds";
+                throw exception::SemanticError("qpp::qasm::Varinfo::as_qreg()",
+                                               context.str());
             }
 
             return std::vector<idx>{reg->indices_[offset_]};
@@ -834,9 +851,10 @@ class MeasureStatement final : public Statement {
 
         // check register lengths
         if (q_args.size() != c_args.size()) {
-            std::cerr << "(" << loc_ << "): Registers have different lengths\n";
+            std::stringstream context;
+            context << loc_ << ": Registers have different lengths";
             throw exception::ParseError(
-                "qpp::qasm::MeasureStatement::evaluate()");
+                "qpp::qasm::MeasureStatement::evaluate()", context.str());
         }
 
         // apply measurements non-desctructively
@@ -920,10 +938,11 @@ class IfStatement final : public Statement {
 
         // check register type
         if (creg == nullptr || creg->quantum_) {
-            std::cerr << loc_ << ": Identifier " << id_
-                      << " does not refer to a classic register\n";
-            throw exception::SemanticError(
-                "qpp::qasm::IfStatement::evaluate()");
+            std::stringstream context;
+            context << loc_ << ": Identifier " << id_
+                    << " does not refer to a classic register";
+            throw exception::SemanticError("qpp::qasm::IfStatement::evaluate()",
+                                           context.str());
         }
 
         // create the shift
@@ -1057,8 +1076,8 @@ class CNOTGate final : public Gate {
         if (ctrls.size() == 1 && tgts.size() == 1) {
             if (ctx.ccontrolled()) {
                 std::vector<idx> tmp{ctrls[0], tgts[0]};
-                circuit->cCTRL_custom(gt.CNOT, ctx.get_cctrls(), tmp,
-                                      ctx.get_shift(), "CX");
+                circuit->cCTRL_joint(gt.CNOT, ctx.get_cctrls(), tmp,
+                                     ctx.get_shift(), "CX");
             } else {
                 circuit->gate(gt.CNOT, ctrls[0], tgts[0], "CX");
             }
@@ -1066,8 +1085,8 @@ class CNOTGate final : public Gate {
             for (idx i = 0; i < ctrls.size(); i++) {
                 if (ctx.ccontrolled()) {
                     std::vector<idx> tmp{ctrls[i], tgts[0]};
-                    circuit->cCTRL_custom(gt.CNOT, ctx.get_cctrls(), tmp,
-                                          ctx.get_shift(), "CX");
+                    circuit->cCTRL_joint(gt.CNOT, ctx.get_cctrls(), tmp,
+                                         ctx.get_shift(), "CX");
                 } else {
                     circuit->gate(gt.CNOT, ctrls[i], tgts[0], "CX");
                 }
@@ -1076,8 +1095,8 @@ class CNOTGate final : public Gate {
             for (idx i = 0; i < tgts.size(); i++) {
                 if (ctx.ccontrolled()) {
                     std::vector<idx> tmp{ctrls[0], tgts[i]};
-                    circuit->cCTRL_custom(gt.CNOT, ctx.get_cctrls(), tmp,
-                                          ctx.get_shift(), "CX");
+                    circuit->cCTRL_joint(gt.CNOT, ctx.get_cctrls(), tmp,
+                                         ctx.get_shift(), "CX");
                 } else {
                     circuit->gate(gt.CNOT, ctrls[0], tgts[i], "CX");
                 }
@@ -1086,15 +1105,17 @@ class CNOTGate final : public Gate {
             for (idx i = 0; i < ctrls.size(); i++) {
                 if (ctx.ccontrolled()) {
                     std::vector<idx> tmp{ctrls[i], tgts[i]};
-                    circuit->cCTRL_custom(gt.CNOT, ctx.get_cctrls(), tmp,
-                                          ctx.get_shift(), "CX");
+                    circuit->cCTRL_joint(gt.CNOT, ctx.get_cctrls(), tmp,
+                                         ctx.get_shift(), "CX");
                 } else {
                     circuit->gate(gt.CNOT, ctrls[i], tgts[i], "CX");
                 }
             }
         } else {
-            std::cerr << loc_ << ": Registers have different lengths\n";
-            throw exception::SemanticError("qpp::qasm::CNOTGate::evaluate()");
+            std::stringstream context;
+            context << loc_ << ": Registers have different lengths";
+            throw exception::SemanticError("qpp::qasm::CNOTGate::evaluate()",
+                                           context.str());
         }
     }
 
@@ -1138,9 +1159,10 @@ class BarrierGate final : public Gate {
                 if (mapping_size == 1) {
                     mapping_size = tmp.size();
                 } else if (mapping_size != tmp.size()) {
-                    std::cerr << loc_ << ": Registers have different lengths\n";
+                    std::stringstream context;
+                    context << loc_ << ": Registers have different lengths";
                     throw exception::SemanticError(
-                        "qpp::qasm::BarrierGate::evaluate()");
+                        "qpp::qasm::BarrierGate::evaluate()", context.str());
                 }
             }
         }
@@ -1191,25 +1213,27 @@ class DeclaredGate final : public Gate {
 
         // check gate type
         if (gate == nullptr) {
-            std::cerr << loc_ << ": Identifier " << id_
-                      << " does not refer to a gate declaration\n";
+            std::stringstream context;
+            context << loc_ << ": Identifier " << id_
+                    << " does not refer to a gate declaration";
             throw exception::SemanticError(
-                "qpp::qasm::DeclaredGate::evaluate()");
+                "qpp::qasm::DeclaredGate::evaluate()", context.str());
         }
 
         // check argument lengths
+        std::stringstream context;
         if (c_args_.size() != gate->c_params_.size()) {
-            std::cerr << loc_ << ": " << id_ << " expects "
-                      << gate->c_params_.size();
-            std::cerr << " classic arguments, got " << c_args_.size() << "\n";
+            context << loc_ << ": " << id_ << " expects "
+                    << gate->c_params_.size();
+            context << " classic arguments, got " << c_args_.size();
             throw exception::SemanticError(
-                "qpp::qasm::DeclaredGate::evaluate()");
+                "qpp::qasm::DeclaredGate::evaluate()", context.str());
         } else if (q_args_.size() != gate->q_params_.size()) {
-            std::cerr << loc_ << ": " << id_ << " expects "
-                      << gate->q_params_.size();
-            std::cerr << " quantum arguments, got " << q_args_.size() << "\n";
+            context << loc_ << ": " << id_ << " expects "
+                    << gate->q_params_.size();
+            context << " quantum arguments, got " << q_args_.size();
             throw exception::SemanticError(
-                "qpp::qasm::DeclaredGate::evaluate()");
+                "qpp::qasm::DeclaredGate::evaluate()", context.str());
         }
 
         // evaluate arguments
@@ -1229,9 +1253,10 @@ class DeclaredGate final : public Gate {
                 if (mapping_size == 1) {
                     mapping_size = q_args[i].size();
                 } else if (mapping_size != q_args[i].size()) {
-                    std::cerr << loc_ << ": Registers have different lengths\n";
+                    std::stringstream context;
+                    context << loc_ << ": Registers have different lengths";
                     throw exception::SemanticError(
-                        "qpp::qasm::DeclaredGate::evaluate()");
+                        "qpp::qasm::DeclaredGate::evaluate()", context.str());
                 }
             }
         }
@@ -1252,10 +1277,10 @@ class DeclaredGate final : public Gate {
 
                 // apply (possibly classical controlled) gate
                 if (ctx.ccontrolled()) {
-                    circuit->cCTRL_custom(mat, ctx.get_cctrls(), mapped_args,
-                                          ctx.get_shift(), id_);
+                    circuit->cCTRL_joint(mat, ctx.get_cctrls(), mapped_args,
+                                         ctx.get_shift(), id_);
                 } else {
-                    circuit->gate_custom(mat, mapped_args, id_);
+                    circuit->gate_joint(mat, mapped_args, id_);
                 }
             }
         } else {
@@ -1431,9 +1456,11 @@ class VarExpr final : public Expr {
         auto val = dynamic_cast<const Number*>(ctx.lookup(value_, loc_));
 
         if (val == nullptr) {
-            std::cerr << loc_ << ": Identifier " << value_;
-            std::cerr << " does not refer to a classical parameter\n";
-            throw exception::ParseError("qpp::qasm::VarExpr::evaluate()");
+            std::stringstream context;
+            context << loc_ << ": Identifier " << value_
+                    << " does not refer to a classical parameter";
+            throw exception::ParseError("qpp::qasm::VarExpr::evaluate()",
+                                        context.str());
         }
 
         return val->value_;

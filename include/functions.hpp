@@ -294,15 +294,13 @@ normalize(const Eigen::MatrixBase<Derived>& A) {
     if (internal::check_cvector(rA) || internal::check_rvector(rA)) {
         double normA = norm(rA);
         if (normA == 0) {
-            std::cerr << "qpp::normalize()\n";
-            throw std::overflow_error("Division by zero!");
+            throw std::overflow_error("qpp::normalize(): Division by zero!");
         }
         result = rA / normA;
     } else if (internal::check_square_mat(rA)) {
         typename Derived::Scalar traceA = trace(rA);
         if (std::abs(traceA) == 0) {
-            std::cerr << "qpp::normalize()\n";
-            throw std::overflow_error("Division by zero!");
+            throw std::overflow_error("qpp::normalize(): Division by zero!");
         }
         result = rA / trace(rA);
     } else
@@ -395,7 +393,7 @@ cmat evects(const Eigen::MatrixBase<Derived>& A) {
  * \brief Full eigen decomposition of Hermitian expression
  * \see qpp::eig()
  *
- * \param A Eigen expression
+ * \param A Eigen expression, assumed to be Hermitian
  * \return Pair of:  1. Eigenvalues of \a A, as a real dynamic column vector,
  * and 2. Eigenvectors of \a A, as columns of a complex dynamic matrix
  */
@@ -424,7 +422,7 @@ heig(const Eigen::MatrixBase<Derived>& A) {
  * \brief Hermitian eigenvalues
  * \see qpp::evals()
  *
- * \param A Eigen expression
+ * \param A Eigen expression, assumed to be Hermitian
  * \return Eigenvalues of Hermitian \a A, as a real dynamic column vector
  */
 template <typename Derived>
@@ -449,7 +447,7 @@ dyn_col_vect<double> hevals(const Eigen::MatrixBase<Derived>& A) {
  * \brief Eigenvectors of Hermitian matrix
  * \see qpp::evects()
  *
- * \param A Eigen expression
+ * \param A Eigen expression, assumed to be Hermitian
  * \return Eigenvectors of Hermitian matrix \a A, as columns of a complex matrix
  */
 template <typename Derived>
@@ -481,7 +479,6 @@ cmat hevects(const Eigen::MatrixBase<Derived>& A) {
  */
 template <typename Derived>
 std::tuple<cmat, dyn_col_vect<double>, cmat>
-
 svd(const Eigen::MatrixBase<Derived>& A) {
     const dyn_mat<typename Derived::Scalar>& rA = A.derived();
 
@@ -884,9 +881,8 @@ double schatten(const Eigen::MatrixBase<Derived>& A, double p) {
  * \a OutputScalar scalar field
  */
 template <typename OutputScalar, typename Derived>
-dyn_mat<OutputScalar>
-cwise(const Eigen::MatrixBase<Derived>& A,
-      OutputScalar (*f)(const typename Derived::Scalar&)) {
+dyn_mat<OutputScalar> cwise(const Eigen::MatrixBase<Derived>& A,
+                            OutputScalar (*f)(typename Derived::Scalar)) {
     const dyn_mat<typename Derived::Scalar>& rA = A.derived();
 
     // EXCEPTION CHECKS

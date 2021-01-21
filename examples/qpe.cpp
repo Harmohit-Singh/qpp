@@ -1,102 +1,86 @@
 // Quantum Phase Estimation
 // Source: ./examples/qpe.cpp
+// See also ./examples/circuits/quantum_phase_estimation.cpp for a high-level
+// API example (with a 2-qubit target unitary!)
 
 /*
 A program to construct the following quantum phase estimator circuit and
 execute simulation on the phase of U = diag(1, e^{2*pi*i*theta}).
 
-|0> ---H----@--------------x----H----@----------@----------------|D--- [q0]
-            |              |         |          |
-|0> ---H----+----@---------+---------R2----H----+-----@----------|D--- [q1]
-            |    |         |                    |     |
-|0> ---H----+----+----@----x--------------------R3----R2----H----|D--- [q2]
-            |    |    |
-|0> ---X----U----U^2--U^4--------------------------------------------- [q3]
+|0> ----H--------------@----x-------------------R3+--R2+--H----|D---- [q0]
+                       |    |                   |    |
+|0> ----H---------@----+----+---------R2+--H----+----@---------|D---- [q1]
+                  |    |    |         |         |
+|0> ----H----@----+----+----x----H----@---------@--------------|D---- [q2]
+             |    |    |
+|0> ----X----U----U^2--U^4------------------------------------------- [q3]
 
- */
+*/
 
 #include <cmath>
 #include <iostream>
+#include <numeric>
 #include <vector>
 
 #include "qpp.h"
 
 int main() {
     using namespace qpp;
-    // initial four qubit state
-    // qubits 0, 1, 2 are counting qubits, qubit 3 is the ancilla
-    std::vector<idx> qubits{0, 0, 0, 0};
-    ket psi = mket(qubits);
+    idx nq_c = 3;                            // number of counting qubits
+    idx nq_a = 1;                            // number of ancilla qubits
+    idx nq = nq_c + nq_a;                    // total number of qubits
+    ket psi = mket(std::vector<idx>(nq, 0)); // |0>^\otimes n
 
     cmat U(2, 2); // initialize a unitary operator
-    // use T-Gate as example; we expect estimated theta = 1/8.
-    double theta = 1 / 8.;
+    // we use the T gate as an example; we expect estimated theta = 1/8 (0.125).
+    double theta = 0.125; // change if you want, increase n for more precision
     U << 1, 0, 0, std::exp(2 * pi * 1_i * theta);
 
     ket result = psi;
-    idx n = qubits.size(); // number of qubits
+    std::vector<idx> counting_qubits(nq_c);
+    std::iota(counting_qubits.begin(), counting_qubits.end(), 0);
+    std::vector<idx> ancilla(nq_a);
+    std::iota(ancilla.begin(), ancilla.end(), nq_c);
 
-    std::cout << ">> QPE on n = " << n << " qubits. ";
-    std::cout << "The sequence of applied gates is:\n";
+    std::cout << ">> QPE on nq_c = " << nq_c
+              << " counting qubits, nq_a = " << nq_a << " ancilla qubits\n\n";
 
-    result = apply(result, gt.X, {n - 1}); // apply X on the ancilla
-    std::cout << "X" << (n - 1) << " ";
-
-    for (idx i = 0; i < n - 1; ++i) {
+    std::cout << ">> The sequence of applied gates is:\n";
+    for (idx i = 0; i < counting_qubits.size(); ++i) {
         // apply Hadamard on counting qubits
         result = apply(result, gt.H, {i});
         std::cout << "H" << i << " ";
     }
-    std::cout << '\n';
+    // prepare |1>, the second eigenvector of U
+    result = apply(result, gt.X, ancilla);
+    std::cout << "X" << disp(ancilla, ",") << '\n';
 
     // apply controlled unitary operations
-    idx repetitions = 1;
-    for (idx i = 0; i < n - 1; ++i) {
-        for (idx r = 0; r < repetitions; ++r) {
-            result = applyCTRL(result, U, {i}, {n - 1});
-            std::cout << "CU"
-                      << "(" << i << ", " << n - 1 << ") ";
-        }
-        repetitions *= 2;
-        std::cout << '\n';
+    idx powerU = 1;
+    for (idx i = 0; i < nq_c; ++i) {
+        std::cout << "CU(" << nq_c - i - 1 << ", " << disp(ancilla, ", ")
+                  << ")^" << powerU << '\n';
+        result = applyCTRL(result, U, {nq_c - i - 1}, ancilla);
+        U = powm(U, 2);
+        powerU *= 2;
     }
 
     // apply inverse quantum Fourier transform to convert state of the counting
     // register
-    for (idx i = 0; i < (n - 1) / 2; ++i) {
-        std::cout << "SWAP(" << i << ", " << (n - 1) - i - 1 << ")\n";
-        result = apply(result, gt.SWAP, {i, (n - 1) - i - 1});
-    }
-
-    for (idx j = 0; j < n - 1; ++j) {
-        for (idx m = 0; m < j; ++m) {
-            cmat Rj(2, 2);
-            Rj << 1, 0, 0, std::exp(-1_i * pi / std::pow(2, j - m));
-            result = applyCTRL(result, Rj, {m}, {j});
-            std::cout << "R" << j - m + 1 << "(" << m << ", " << j << ") ";
-        }
-        result = apply(result, gt.H, {j});
-        std::cout << "H" << j << "\n";
-    }
-    std::cout << '\n';
+    result = applyTFQ(result, counting_qubits);
+    std::cout << "QFT^{-1}" << disp(counting_qubits, ", ", "(", ")") << "\n";
 
     // measure the counting register and readout probabilities
-    double decimal = 0.0;
-    for (idx i = 0; i < n - 1; ++i) {
-        auto measured = measure(result, gt.Z, {i});
-        auto res = std::get<RES>(measured);
-        auto prob = std::get<PROB>(measured);
-        std::cout << ">> Measurement result q" << i << ": " << res << '\n';
-        std::cout << ">> Probabilities: ";
-        std::cout << disp(prob, ", ") << '\n';
-        if (prob[0] < prob[1]) {
-            decimal += std::pow(2, i);
-        }
-    }
+    auto measured = measure_seq(result, {counting_qubits});
+    auto res = std::get<RES>(measured);
+    std::cout << ">> Measurement result [q0 q1 ... ]: " << disp(res, " ");
     std::cout << '\n';
 
+    // decimal representation of the measurement result
+    idx decimal = multiidx2n(res, std::vector<idx>(counting_qubits.size(), 2));
+
     // readout phase estimate
-    double theta_e = decimal / std::pow(2, n - 1);
+    double theta_e = decimal / std::pow(2, nq_c);
     std::cout << ">> Input theta = " << theta << '\n';
     std::cout << ">> Estimated theta = " << theta_e << '\n';
     std::cout << ">> Norm difference: " << std::abs(theta_e - theta) << '\n';
